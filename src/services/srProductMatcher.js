@@ -109,27 +109,25 @@ Match ONE SR product to each AM and PM routine step. Return this exact JSON:
   "bundle_note": "string — 1 sentence"
 }`;
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userMessage }],
-    }),
-  });
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+        generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 4096 },
+      }),
+    }
+  );
 
   if (!response.ok) {
     throw new Error(`SR Product Matcher API error: ${response.status}`);
   }
 
   const data = await response.json();
-  const raw = data.content.find(b => b.type === 'text')?.text || '';
+  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
   try {
     return JSON.parse(raw.replace(/```json|```/g, '').trim());
