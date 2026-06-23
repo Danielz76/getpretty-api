@@ -1,18 +1,23 @@
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
-const app = express();
-app.use(express.json());
+const { matchSRProducts } = require('./src/services/srProductMatcher');
+const { analyzeShelfAndSubstitute } = require('./src/services/shelfAnalyzer');
 
-// Connect to MongoDB
+const app = express();
+app.use(express.json({ limit: '50mb' }));
+
 mongoose.connect(process.env.MONGODB_URI);
 
-// Schema for storing results
 const analysisSchema = new mongoose.Schema({
   userId: String,
   quizAnswers: Object,
-  skinEraResult: Object,
-  createdAt: { type: Date, default: Date.now }
+  eraAssignment: Object,
+  srRecommendations: Object,
+  shelfAnalysis: Object,
+  analysisVersion: { type: String, default: '2.0' },
+  shelfPhotosUploaded: Boolean,
+  createdAt: { type: Date, default: Date.now },
 });
 const Analysis = mongoose.model('Analysis', analysisSchema);
 
@@ -150,12 +155,11 @@ Return a valid JSON object exactly as specified in the schema below. Do not add 
   ]
 }`;
 
-// Main endpoint
 app.post('/analyze-skin', async (req, res) => {
-  const { quizAnswers, userId } = req.body;
+  const { quizAnswers, userId, shelfPhotosBase64 = [] } = req.body;
 
   try {
-    // Call Gemini
+    // Call 1: Era assignment via Gemini
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
@@ -167,28 +171,39 @@ app.post('/analyze-skin', async (req, res) => {
             role: 'user',
             parts: [{ text: `Analyze this skin profile and return the Skin Era JSON:\n\n${JSON.stringify(quizAnswers)}` }]
           }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            maxOutputTokens: 8192
-          }
+          generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 8192 }
         })
       }
     );
 
     const geminiData = await geminiRes.json();
-    const result = JSON.parse(
-      geminiData.candidates[0].content.parts[0].text
-    );
+    const eraResult = JSON.parse(geminiData.candidates[0].content.parts[0].text);
 
-    // Save to MongoDB
-    await Analysis.create({ userId, quizAnswers, skinEraResult: result });
+    // Call 2: SR product matching via Claude
+    const srRecommendations = await matchSRProducts(eraResult, quizAnswers);
 
-    res.json(result);
+    // Call 3: Shelf analysis via Claude (only if shelf photos provided)
+    let shelfAnalysis = null;
+    if (shelfPhotosBase64.length > 0 && srRecommendations) {
+      shelfAnalysis = await analyzeShelfAndSubstitute(
+        shelfPhotosBase64, srRecommendations, quizAnswers, eraResult
+      );
+    }
+
+    await Analysis.create({
+      userId,
+      quizAnswers,
+      eraAssignment: eraResult,
+      srRecommendations,
+      shelfAnalysis,
+      shelfPhotosUploaded: shelfPhotosBase64.length > 0,
+    });
+
+    res.json({ era: eraResult, srProducts: srRecommendations, shelfAnalysis });
 
   } catch (err) {
     console.error(err);
-    // Fallback to Barrier Healing if anything fails
-    res.json({ era: { id: 'barrier_healing', name: 'Barrier Healing Era' } });
+    res.json({ era: { id: 'barrier_healing', name: 'Barrier Healing Era' }, srProducts: null, shelfAnalysis: null });
   }
 });
 
