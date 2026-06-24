@@ -177,9 +177,16 @@ app.post('/analyze-skin', async (req, res) => {
     );
 
     const geminiData = await geminiRes.json();
+    if (!geminiData.candidates?.[0]) {
+      console.error('Gemini error response:', JSON.stringify(geminiData));
+      throw new Error('Gemini returned no candidates');
+    }
     const eraResult = JSON.parse(geminiData.candidates[0].content.parts[0].text);
 
-    // Call 2: SR product matching via Claude
+    // Brief pause to avoid rate limit between consecutive Gemini calls
+    await new Promise(r => setTimeout(r, 6000));
+
+    // Call 2: SR product matching via Gemini
     const srRecommendations = await matchSRProducts(eraResult, quizAnswers);
 
     // Call 3: Shelf analysis via Claude (only if shelf photos provided)

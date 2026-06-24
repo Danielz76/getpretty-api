@@ -1,8 +1,13 @@
 const { SR_PRODUCTS, filterForHomeUse, filterForPregnancy, filterForDarkSkin } = require('../data/srProducts');
 
-function getSafeProductsForUser(quizAnswers) {
+function getSafeProductsForUser(quizAnswers, eraId) {
   let products = [...SR_PRODUCTS];
   products = filterForHomeUse(products);
+
+  // Pre-filter by era to reduce payload size — include era matches + universal products
+  if (eraId) {
+    products = products.filter(p => p.eras.includes(eraId) || p.eras.length >= 4);
+  }
 
   if (quizAnswers.pregnant_or_ttc === 'yes' || quizAnswers.pregnant_or_ttc === 'prefer_not_to_say') {
     products = filterForPregnancy(products);
@@ -34,13 +39,13 @@ function buildProductContext(products) {
 }
 
 async function matchSRProducts(eraResult, quizAnswers) {
-  const safeProducts = getSafeProductsForUser(quizAnswers);
-  const productContext = buildProductContext(safeProducts);
-
   const eraId = eraResult.era?.id;
   const amSteps = eraResult.routine?.am || [];
   const pmSteps = eraResult.routine?.pm || [];
   const safetyFlags = eraResult.safety_flags || [];
+
+  const safeProducts = getSafeProductsForUser(quizAnswers, eraId);
+  const productContext = buildProductContext(safeProducts);
 
   const systemPrompt = `You are a professional SR Cosmetics product specialist. Match SR Cosmetics products to skincare routine steps based on the user's Skin Era, each step's required category and key ingredients, the user's safety profile, and the Lu Skincare Lab clinical philosophy (barrier-first, inflammation reduction before correction).
 
@@ -109,30 +114,41 @@ Match ONE SR product to each AM and PM routine step. Return this exact JSON:
   "bundle_note": "string — 1 sentence"
 }`;
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ role: 'user', parts: [{ text: userMessage }] }],
-        generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 4096 },
-      }),
-    }
-  );
-
-  if (!response.ok) {
-    throw new Error(`SR Product Matcher API error: ${response.status}`);
+  let data;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: 'user', parts: [{ text: userMessage }] }],
+          generationConfig: {
+          responseMimeType: 'application/json',
+          maxOutputTokens: 4096,
+          thinkingConfig: { thinkingBudget: 0 },
+        },
+        }),
+      }
+    );
+    data = await response.json();
+    const candidate = data.candidates?.[0];
+    const finishReason = candidate?.finishReason;
+    console.log(`Attempt ${attempt} — finishReason: ${finishReason}, outputChars: ${candidate?.content?.parts?.[0]?.text?.length}`);
+    if (candidate && finishReason === 'STOP') break;
+    console.warn(`SR matcher attempt ${attempt} failed (${data.error?.status || finishReason}), retrying...`);
+    await new Promise(r => setTimeout(r, attempt * 2000));
   }
 
-  const data = await response.json();
-  const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
   try {
     return JSON.parse(raw.replace(/```json|```/g, '').trim());
   } catch (e) {
     console.error('SR Product Matcher parse error:', e);
+    require('fs').writeFileSync('/tmp/sr_raw.json', raw);
+    console.error('Raw response written to /tmp/sr_raw.json, length:', raw.length);
     return null;
   }
 }
