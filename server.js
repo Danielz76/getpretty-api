@@ -156,10 +156,21 @@ Return a valid JSON object exactly as specified in the schema below. Do not add 
 }`;
 
 app.post('/analyze-skin', async (req, res) => {
-  const { quizAnswers, userId, shelfPhotosBase64 = [] } = req.body;
+  const { quizAnswers, userId, skinPhotosBase64 = [], shelfPhotosBase64 = [] } = req.body;
 
   try {
-    // Call 1: Era assignment via Gemini
+    // Build parts for Call 1: text profile + optional skin selfie images
+    const userParts = [
+      { text: `Analyze this skin profile and return the Skin Era JSON:\n\n${JSON.stringify(quizAnswers)}` },
+      ...skinPhotosBase64.map(b64 => ({
+        inlineData: { mimeType: 'image/jpeg', data: b64 },
+      })),
+    ];
+    if (skinPhotosBase64.length > 0) {
+      userParts.push({ text: 'The images above are skin selfies (right cheek, left cheek, front face). Use them to inform the skin analysis, tone assessment, and era assignment.' });
+    }
+
+    // Call 1: Era assignment via Gemini (with optional vision)
     const geminiRes = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
@@ -167,10 +178,7 @@ app.post('/analyze-skin', async (req, res) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
-          contents: [{
-            role: 'user',
-            parts: [{ text: `Analyze this skin profile and return the Skin Era JSON:\n\n${JSON.stringify(quizAnswers)}` }]
-          }],
+          contents: [{ role: 'user', parts: userParts }],
           generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 8192 }
         })
       }
