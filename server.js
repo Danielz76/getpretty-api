@@ -1,10 +1,12 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const mongoose = require('mongoose');
 const { matchSRProducts } = require('./src/services/srProductMatcher');
 const { analyzeShelfAndSubstitute } = require('./src/services/shelfAnalyzer');
 
 const app = express();
+app.use(cors());                 // allow browser calls from getpretty.app (and dev origins)
 app.use(express.json({ limit: '50mb' }));
 
 mongoose.connect(process.env.MONGODB_URI);
