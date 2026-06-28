@@ -82,7 +82,11 @@ Analyze all visible products in the photos. Return this exact JSON:
       body: JSON.stringify({
         system_instruction: { parts: [{ text: systemPrompt }] },
         contents: [{ role: 'user', parts: userMessage }],
-        generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 4096 },
+        generationConfig: {
+          responseMimeType: 'application/json',
+          maxOutputTokens: 4096,
+          thinkingConfig: { thinkingBudget: 0 },
+        },
       }),
     }
   );

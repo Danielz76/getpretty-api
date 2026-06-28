@@ -179,7 +179,11 @@ app.post('/analyze-skin', async (req, res) => {
         body: JSON.stringify({
           system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
           contents: [{ role: 'user', parts: userParts }],
-          generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 8192 }
+          generationConfig: {
+            responseMimeType: 'application/json',
+            maxOutputTokens: 8192,
+            thinkingConfig: { thinkingBudget: 0 },
+          }
         })
       }
     );
